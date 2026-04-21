@@ -1,0 +1,10 @@
+[project]
+name = "quantify-trader"
+version = "0.1.0"
+description = "Personal quant trading workstation (Qt) scaffold"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+
