@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -76,4 +77,32 @@ def make_demo_multi_close(symbols: list[str], years: int = 3, seed: int = 7) -> 
         closes[sym] = close
 
     return pd.DataFrame(closes, index=idx)
+
+
+def load_real_close_data(data_dir: str | Path) -> pd.DataFrame:
+    """
+    从 quantify/data 目录加载真实 CSV 数据，返回收盘价 DataFrame。
+    CSV 文件格式支持中文列名（日期/收盘）和英文列名（date/close）。
+    """
+    data_path = Path(data_dir)
+    csv_files = sorted(data_path.glob("*_hfq_daily_10y.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in {data_dir}")
+
+    close_dict: dict[str, pd.Series] = {}
+    for fpath in csv_files:
+        symbol = fpath.stem.split("_")[0]
+        df = pd.read_csv(fpath, encoding="utf-8")
+
+        date_col = "日期" if "日期" in df.columns else "date"
+        close_col = "收盘" if "收盘" in df.columns else "close"
+
+        df[date_col] = pd.to_datetime(df[date_col])
+        df = df.set_index(date_col)
+        close_dict[symbol] = df[close_col].astype(float)
+
+    result = pd.DataFrame(close_dict)
+    result = result.sort_index()
+    result = result[result.index.duplicated(keep="first") == False]
+    return result
 

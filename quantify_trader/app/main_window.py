@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -23,13 +25,15 @@ from quantify_trader.backtest.portfolio_engine import (
     PortfolioBacktestEngine,
     PortfolioBacktestRequest,
 )
-from quantify_trader.data.demo_data import make_demo_multi_close
+from quantify_trader.data.demo_data import load_real_close_data
 from quantify_trader.monitor.waterline import WaterlineSnapshot
 from quantify_trader.strategies.rebalance_equal_weight import (
     GroupedEqualWeightRebalanceStrategy,
     RebalanceParams,
 )
 from quantify_trader.trading.portfolio_broker import PortfolioSimBroker
+
+_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 
 @dataclass(frozen=True)
@@ -38,19 +42,20 @@ class UiState:
 
 
 class MainWindow(QMainWindow):
+    _GROUPS: ClassVar[dict[str, list[str]]] = {
+        "沪深300": ["510300"],
+        "国债ETF": ["511010"],
+        "银华日利": ["511880"],
+        "黄金ETF": ["518880"],
+    }
+    _SYMBOLS: ClassVar[list[str]] = ["510300", "511010", "511880", "518880"]
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Quantify Trader")
         self.resize(1200, 720)
 
         self._engine = PortfolioBacktestEngine()
-        self._groups: dict[str, list[str]] = {
-            "G1": ["AAA", "AAB", "AAC"],
-            "G2": ["BBA", "BBB"],
-            "G3": ["CCA", "CCB", "CCC", "CCD"],
-            "G4": ["DDA", "DDB"],
-        }
-        self._symbols = [s for members in self._groups.values() for s in members]
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -64,20 +69,15 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         self.portfolio = QComboBox()
-        self.portfolio.addItems(["等权再平衡(15%/35%触发 -> 25%)"])
-
-        self.years = QSpinBox()
-        self.years.setRange(1, 20)
-        self.years.setValue(3)
+        self.portfolio.addItems(["等权再平衡(20%/30%触发 -> 25%)"])
 
         self.run_btn = QPushButton("运行回测")
         self.run_btn.clicked.connect(self._on_run_backtest)
 
         form.addRow("策略", self.portfolio)
-        form.addRow("回测年数", self.years)
         form.addRow(
             "分组",
-            QLabel(" | ".join([f"{g}: {', '.join(ms)}" for g, ms in self._groups.items()])),
+            QLabel(" | ".join([f"{g}: {', '.join(ms)}" for g, ms in self._GROUPS.items()])),
         )
         left_layout.addLayout(form)
         left_layout.addWidget(self.run_btn)
@@ -108,23 +108,16 @@ class MainWindow(QMainWindow):
 
         self._on_run_backtest()
 
-    def _get_state(self) -> UiState:
-        return UiState(
-            years=int(self.years.value()),
-        )
-
     def _on_run_backtest(self) -> None:
-        st = self._get_state()
-
-        close = make_demo_multi_close(self._symbols, years=st.years, seed=7)
+        close = load_real_close_data(_DATA_DIR)
         strategy = GroupedEqualWeightRebalanceStrategy(
-            groups=self._groups, params=RebalanceParams(lower_weight=0.15, upper_weight=0.35)
+            groups=self._GROUPS, params=RebalanceParams(lower_weight=0.20, upper_weight=0.30)
         )
 
         broker = PortfolioSimBroker(initial_cash=1_000_000.0)
 
         req = PortfolioBacktestRequest(
-            symbols=self._symbols,
+            symbols=self._SYMBOLS,
             close_prices=close,
             strategy=strategy,
             broker=broker,
@@ -145,15 +138,26 @@ class MainWindow(QMainWindow):
         self.equity_plot.plot(x, equity, pen=pg.mkPen(color=(66, 133, 244), width=2))
         self.drawdown_plot.plot(x, dd, pen=pg.mkPen(color=(234, 67, 53), width=2))
 
+        annual_returns = stats.get("annual_returns", {})
+        annual_lines = [f"  {year}: {ret:+.2%}" for year, ret in annual_returns.items()]
+
         self.metrics.setText(
             "\n".join(
                 [
+                    f"初始资金: 1,000,000.00",
                     f"净值终值: {equity[-1]:,.2f}",
+                    f"总收益率: {stats.get('total_return', float('nan')):.2%}",
+                    f"年化收益: {stats.get('cagr', float('nan')):.2%}",
                     f"最大回撤: {snap.max_drawdown_pct:.2%}",
-                    f"年化收益(近似): {stats.get('cagr', float('nan')):.2%}",
-                    f"夏普(近似): {stats.get('sharpe', float('nan')):.2f}",
+                    f"夏普比率: {stats.get('sharpe', float('nan')):.2f}",
                     f"交易次数: {stats.get('trades', 0)}",
                     f"再平衡次数: {stats.get('rebalances', 0)}",
+                    f"回测天数: {len(equity_curve)}",
+                    "",
+                    "各年收益:",
+                    *annual_lines,
+                    "",
+                    f"最终收益: {stats.get('total_return', float('nan')):.2%}",
                 ]
             )
         )
