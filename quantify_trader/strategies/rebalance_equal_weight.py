@@ -12,12 +12,17 @@ class RebalanceParams:
 class GroupedEqualWeightRebalanceStrategy:
     """
     组合再平衡策略：
-    - 固定 4 个分组（标签组），每组目标权重 25%
-    - 触发条件：任一“组权重” > upper 或 < lower
-    - 触发后：把每组拉回 25%，再在组内按成员数等分
+    - 固定 4 个分组（标签组），每组可配置目标权重
+    - 触发条件：任一"组权重" > upper 或 < lower
+    - 触发后：把每组拉回各自的目标权重，再在组内按成员数等分
     """
 
-    def __init__(self, groups: dict[str, list[str]], params: RebalanceParams | None = None) -> None:
+    def __init__(
+        self,
+        groups: dict[str, list[str]],
+        group_targets: dict[str, float] | None = None,
+        params: RebalanceParams | None = None,
+    ) -> None:
         if len(groups) != 4:
             raise ValueError("groups must contain exactly 4 groups")
         symbols: list[str] = []
@@ -31,8 +36,19 @@ class GroupedEqualWeightRebalanceStrategy:
             raise ValueError("symbol appears in multiple groups")
 
         self.groups = groups
-        self.symbols = symbols
         self.params = params or RebalanceParams()
+
+        if group_targets is None:
+            group_targets = {g: 0.25 for g in groups}
+        else:
+            missing = set(groups) - set(group_targets)
+            if missing:
+                raise ValueError(f"missing group_targets for: {missing}")
+            total = sum(group_targets.values())
+            if abs(total - 1.0) > 1e-9:
+                raise ValueError(f"group_targets must sum to 1.0, got {total}")
+
+        self.group_targets = group_targets
 
     def should_rebalance(self, weights: dict[str, float]) -> bool:
         group_weights = self._group_weights(weights)
@@ -42,10 +58,9 @@ class GroupedEqualWeightRebalanceStrategy:
         return False
 
     def target_weights(self) -> dict[str, float]:
-        group_target = 0.25
         targets: dict[str, float] = {}
-        for _, members in self.groups.items():
-            w = group_target / float(len(members))
+        for g, members in self.groups.items():
+            w = self.group_targets[g] / float(len(members))
             for s in members:
                 targets[s] = w
         return targets
@@ -55,4 +70,3 @@ class GroupedEqualWeightRebalanceStrategy:
         for g, members in self.groups.items():
             out[g] = float(sum(float(weights.get(s, 0.0)) for s in members))
         return out
-

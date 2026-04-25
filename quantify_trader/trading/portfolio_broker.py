@@ -19,13 +19,14 @@ class PortfolioSimBroker:
     """
     多标的组合模拟券商（最小实现）：
     - 市价成交（用传入的 price）
-    - 不考虑手续费/滑点（可扩展）
+    - 支持交易成本 commission_rate（成交金额的百分比）
     - 允许多个 symbol 持仓
     """
 
     initial_cash: float = 1_000_000.0
     cash: float = 0.0
     positions_qty: dict[str, float] | None = None
+    commission_rate: float = 0.0
 
     def __post_init__(self) -> None:
         self.cash = float(self.initial_cash)
@@ -68,7 +69,8 @@ class PortfolioSimBroker:
                 cost = qty * px
             if qty <= 0:
                 return
-            self.cash -= cost
+            commission = cost * self.commission_rate
+            self.cash -= cost + commission
             self.positions_qty[sym] = self.positions_qty.get(sym, 0.0) + qty
             return
 
@@ -80,5 +82,7 @@ class PortfolioSimBroker:
         self.positions_qty[sym] = held - sell_qty
         if self.positions_qty[sym] <= 1e-12:
             self.positions_qty.pop(sym, None)
-        self.cash += sell_qty * px
+        proceeds = sell_qty * px
+        commission = proceeds * self.commission_rate
+        self.cash += proceeds - commission
 

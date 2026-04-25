@@ -10,12 +10,12 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -43,12 +43,13 @@ class UiState:
 
 class MainWindow(QMainWindow):
     _GROUPS: ClassVar[dict[str, list[str]]] = {
-        "沪深300": ["510300"],
-        "国债ETF": ["511010"],
-        "银华日利": ["511880"],
-        "黄金ETF": ["518880"],
+        "股票": ["510300"],
+        "国债": ["511010"],
+        "短债或货币基金": ["511880"],
+        "黄金": ["518880"],
     }
     _SYMBOLS: ClassVar[list[str]] = ["510300", "511010", "511880", "518880"]
+    _GROUP_NAMES: ClassVar[list[str]] = list(_GROUPS.keys())
 
     def __init__(self) -> None:
         super().__init__()
@@ -68,17 +69,43 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(10)
 
         form = QFormLayout()
+
         self.portfolio = QComboBox()
-        self.portfolio.addItems(["等权再平衡(20%/30%触发 -> 25%)"])
+        self.portfolio.addItems(["等权再平衡"])
+
+        self.group_weight_spins: dict[str, QDoubleSpinBox] = {}
+        group_weight_row = QVBoxLayout()
+        group_weight_row.setSpacing(4)
+        for g in self._GROUP_NAMES:
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1.0)
+            spin.setSingleStep(0.01)
+            spin.setDecimals(2)
+            spin.setValue(0.25)
+            spin.setSuffix(f"  ({', '.join(self._GROUPS[g])})")
+            self.group_weight_spins[g] = spin
+            group_weight_row.addWidget(QLabel(g))
+            group_weight_row.addWidget(spin)
+
+        self.lower_spin = QDoubleSpinBox()
+        self.lower_spin.setRange(0.0, 1.0)
+        self.lower_spin.setSingleStep(0.01)
+        self.lower_spin.setDecimals(2)
+        self.lower_spin.setValue(0.20)
+
+        self.upper_spin = QDoubleSpinBox()
+        self.upper_spin.setRange(0.0, 1.0)
+        self.upper_spin.setSingleStep(0.01)
+        self.upper_spin.setDecimals(2)
+        self.upper_spin.setValue(0.30)
 
         self.run_btn = QPushButton("运行回测")
         self.run_btn.clicked.connect(self._on_run_backtest)
 
         form.addRow("策略", self.portfolio)
-        form.addRow(
-            "分组",
-            QLabel(" | ".join([f"{g}: {', '.join(ms)}" for g, ms in self._GROUPS.items()])),
-        )
+        form.addRow("分组目标权重", group_weight_row)
+        form.addRow("再平衡下限", self.lower_spin)
+        form.addRow("再平衡上限", self.upper_spin)
         left_layout.addLayout(form)
         left_layout.addWidget(self.run_btn)
 
@@ -110,11 +137,18 @@ class MainWindow(QMainWindow):
 
     def _on_run_backtest(self) -> None:
         close = load_real_close_data(_DATA_DIR)
+
+        group_targets = {g: self.group_weight_spins[g].value() for g in self._GROUP_NAMES}
+        lower = self.lower_spin.value()
+        upper = self.upper_spin.value()
+
         strategy = GroupedEqualWeightRebalanceStrategy(
-            groups=self._GROUPS, params=RebalanceParams(lower_weight=0.20, upper_weight=0.30)
+            groups=self._GROUPS,
+            group_targets=group_targets,
+            params=RebalanceParams(lower_weight=lower, upper_weight=upper),
         )
 
-        broker = PortfolioSimBroker(initial_cash=1_000_000.0)
+        broker = PortfolioSimBroker(initial_cash=1_000_000.0, commission_rate=0.00015)
 
         req = PortfolioBacktestRequest(
             symbols=self._SYMBOLS,
@@ -161,4 +195,3 @@ class MainWindow(QMainWindow):
                 ]
             )
         )
-
